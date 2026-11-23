@@ -176,14 +176,19 @@ const APPS_SCRIPT_CODE = `function doPost(e) {
 function doGet(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   var rows = sheet.getDataRange().getValues();
+  var tz = Session.getScriptTimeZone();
   var targetDate = (e && e.parameter && e.parameter.date) ? e.parameter.date : '';
   var targetUnit = (e && e.parameter && e.parameter.unit) ? e.parameter.unit : '';
   var list = [];
   for (var i = 1; i < rows.length; i++) {
     var r = rows[i];
-    if (targetDate && String(r[0]) !== targetDate) continue;
-    if (targetUnit && String(r[2]) !== targetUnit) continue;
-    list.push({date: String(r[0]), time: String(r[1]), unit: String(r[2]), name: String(r[3])});
+    var dStr = (r[0] instanceof Date) ? Utilities.formatDate(r[0], tz, 'yyyy-MM-dd') : String(r[0]).trim();
+    var tStr = (r[1] instanceof Date) ? Utilities.formatDate(r[1], tz, 'HH:mm') : String(r[1]).trim();
+    var uStr = String(r[2]).trim();
+    var nStr = String(r[3]).trim();
+    if (targetDate && dStr !== targetDate) continue;
+    if (targetUnit && uStr !== targetUnit) continue;
+    list.push({date: dStr, time: tStr, unit: uStr, name: nStr});
   }
   return ContentService.createTextOutput(JSON.stringify({ok: true, list: list}))
     .setMimeType(ContentService.MimeType.JSON);
@@ -339,7 +344,7 @@ const EMERGENCIES={
 };
 
 let savedSheetUrl='';
-try{savedSheetUrl=localStorage.getItem('sciSafetySheetUrl')||''}catch(e){}
+try{localStorage.removeItem('sciSafetySheetUrl');savedSheetUrl=sessionStorage.getItem('sciSafetySheetUrl')||''}catch(e){}
 
 let S={
   step:0,
@@ -384,7 +389,7 @@ $('#tReset').onclick=()=>{stopTimer();tSec=300;startTimer()};
 $('#homeBtn').onclick=()=>{
   if(confirm('단원 선택 화면으로 돌아갈까요?')){
     stopTimer();tSec=300;$('#timerBox').hidden=true;
-    S.step=0;S.passIssued=false;S.lockedSession=false;render();
+    S.step=0;S.passIssued=false;S.lockedSession=false;render(true);
   }
 };
 
@@ -413,7 +418,7 @@ function startSession(unitName, tags, grade=0, sem=0, locked=false){
   S.pledged=false; S.passIssued=false; S.syncState='';
   S.step=1;
   tSec=300; startTimer();
-  render();
+  render(true);
 }
 
 function renderNav(){
@@ -429,7 +434,7 @@ function renderNav(){
     return `<button class="${cls}" ${dis} data-go="${idx}">${lb}</button>`;
   }).join('');
   $('#nav').querySelectorAll('button:not(:disabled)').forEach(b=>{
-    b.onclick=()=>{S.step=+b.dataset.go;render()};
+    b.onclick=()=>{S.step=+b.dataset.go;render(true)};
   });
 }
 
@@ -579,10 +584,11 @@ function viewSelect(){
         </div>
 
         <div class="t-sec">
-          <label class="t-label" for="sheetUrlIn">2. 구글 시트(Apps Script) 웹 앱 주소 <span style="font-weight:400;color:var(--sub)">(한 번 넣으면 자동 저장)</span></label>
+          <label class="t-label" for="sheetUrlIn">2. 구글 시트(Apps Script) 웹 앱 주소 <span style="font-weight:400;color:var(--sub)">(브라우저를 닫으면 자동 초기화)</span></label>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input type="url" id="sheetUrlIn" style="flex:1;min-width:220px" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(S.sheetUrl)}">
+            <input type="url" id="sheetUrlIn" style="flex:1;min-width:200px" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(S.sheetUrl)}">
             <button class="btn" id="testConnBtn" style="flex:none;white-space:nowrap">🔌 연결 확인</button>
+            <button class="btn ghost" id="clearSheetBtn" style="flex:none;white-space:nowrap;padding:8px 11px" title="입력한 주소 지우기">🗑️ 지우기</button>
           </div>
           ${S.connState?`<div class="fb ${S.connState==='ok'?'ok':S.connState==='err'?'no':''}" style="margin-top:8px;padding:9px 12px;font-size:14px;${S.connState==='wait'?'background:var(--warnbg);color:var(--warn);border:1.5px solid var(--warn)':''}">
             <b>${S.connState==='ok'?'✅ ':S.connState==='err'?'❌ ':'⏳ '}</b>${esc(S.connMsg)}
@@ -679,10 +685,15 @@ function viewSelect(){
     $('#sheetUrlIn').oninput=()=>{
       S.sheetUrl=$('#sheetUrlIn').value.trim();
       S.connState=''; S.connMsg='';
-      try{localStorage.setItem('sciSafetySheetUrl',S.sheetUrl)}catch(e){}
+      try{sessionStorage.setItem('sciSafetySheetUrl',S.sheetUrl)}catch(e){}
       makeUrl();
     };
     $('#testConnBtn').onclick=testSheetConnection;
+    $('#clearSheetBtn').onclick=()=>{
+      S.sheetUrl=''; S.connState=''; S.connMsg=''; S.boardList=null; S.boardErr='';
+      try{sessionStorage.removeItem('sciSafetySheetUrl')}catch(e){}
+      render();
+    };
     makeUrl();
 
     $('#copyScript').onclick=async()=>{
@@ -776,7 +787,7 @@ function viewStep1(){
     else S.gears=S.gears.filter(x=>x!==id);
     render();
   });
-  $('#to2').onclick=()=>{S.step=2;render()};
+  $('#to2').onclick=()=>{S.step=2;render(true)};
 }
 
 /* 2단계: 상황별 안전 퀴즈 */
@@ -819,10 +830,10 @@ function viewStep2(){
     else{S.qWrong=true;}
     render();
   });
-  $('#b1').onclick=()=>{S.step=1;render()};
+  $('#b1').onclick=()=>{S.step=1;render(true)};
   $('#qNext').onclick=()=>{
-    if(S.qIdx+1<S.qList.length){S.qIdx++;S.qSolved=false;S.qWrong=false;render();}
-    else{S.step=3;render();}
+    if(S.qIdx+1<S.qList.length){S.qIdx++;S.qSolved=false;S.qWrong=false;render(true);}
+    else{S.step=3;render(true);}
   };
 }
 
@@ -866,8 +877,8 @@ function viewStep3(){
     }
     render();
   });
-  $('#b2').onclick=()=>{S.step=2;render()};
-  $('#to4').onclick=()=>{S.step=4;render()};
+  $('#b2').onclick=()=>{S.step=2;render(true)};
+  $('#to4').onclick=()=>{S.step=4;render(true)};
 }
 
 /* 통과증을 PNG 이미지로 생성하여 다운로드 */
@@ -1012,7 +1023,7 @@ function viewStep4(){
   const syncBtn=()=>{$('#issueBtn').disabled=!(S.pledged&&S.studentName.trim())};
   $('#plChk').onchange=e=>{S.pledged=e.target.checked;e.target.closest('label').classList.toggle('checked',S.pledged);syncBtn()};
   $('#stName').oninput=e=>{S.studentName=e.target.value;syncBtn()};
-  $('#b3').onclick=()=>{S.step=3;render()};
+  $('#b3').onclick=()=>{S.step=3;render(true)};
 
   const cv=$('#sigPad'), ctx=cv.getContext('2d');
   ctx.lineWidth=3; ctx.lineCap='round'; ctx.strokeStyle='#16323f';
@@ -1037,14 +1048,14 @@ function viewStep4(){
   };
 }
 
-function render(){
+function render(scrollTop=false){
   renderNav();
   if(S.step===0)viewSelect();
   else if(S.step===1)viewStep1();
   else if(S.step===2)viewStep2();
   else if(S.step===3)viewStep3();
   else if(S.step===4)viewStep4();
-  window.scrollTo(0,0);
+  if(scrollTop) window.scrollTo(0,0);
 }
 
 function checkUrlBoot(){
