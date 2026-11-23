@@ -347,6 +347,7 @@ let S={
   teacherMode:false, customTags:['heat','glass'], showQR:false,
   sheetUrl:savedSheetUrl,
   boardList:null, boardLoading:false, boardErr:'',
+  connState:'', connMsg:'',
   gears:[],
   qList:[], qIdx:0, qSolved:false, qWrong:false,
   emDone:[], emWrong:{},
@@ -471,6 +472,39 @@ async function sendToSheet(){
   render();
 }
 
+/* 구글 시트 연결 테스트 */
+async function testSheetConnection(){
+  const urlStr=(S.sheetUrl||'').trim();
+  if(!urlStr || !urlStr.startsWith('https://script.google.com/')){
+    S.connState='err';
+    S.connMsg='올바른 Apps Script 웹 앱 주소(https://script.google.com/.../exec)를 입력해 주세요.';
+    render();return;
+  }
+  S.connState='wait';
+  S.connMsg='구글 시트와 연결을 확인하는 중...';
+  render();
+  try{
+    const sep=urlStr.includes('?')?'&':'?';
+    const res=await fetch(urlStr+sep+'date='+encodeURIComponent(todayISO()), {method:'GET', redirect:'follow'});
+    const text=await res.text();
+    let data=null;
+    try{data=JSON.parse(text)}catch(e){}
+    if(data && data.ok){
+      S.connState='ok';
+      S.connMsg='연결 성공! 구글 시트와 정상적으로 통신하고 있어요. (오늘 기록: '+(data.list?data.list.length:0)+'건)';
+      S.boardList=data.list||[];
+      S.boardErr='';
+    }else{
+      S.connState='err';
+      S.connMsg='주소는 열렸지만 올바른 응답이 아니에요. Apps Script 코드가 정확히 저장·배포되었는지 확인해 주세요.';
+    }
+  }catch(e){
+    S.connState='err';
+    S.connMsg='연결 실패: 배포 시 [액세스 권한: 모든 사용자]로 설정했는지 확인해 주세요. (학교/교육청 계정은 외부 공개가 막혀 있을 수 있어 개인 Gmail 계정을 권장합니다.)';
+  }
+  render();
+}
+
 /* 구글 시트에서 오늘 완료 현황 불러오기 */
 async function fetchBoard(){
   if(!S.sheetUrl || !S.sheetUrl.startsWith('http')){
@@ -482,10 +516,12 @@ async function fetchBoard(){
     const sep=S.sheetUrl.includes('?')?'&':'?';
     const unitTitle=(S.unitName||'').trim();
     const url=`${S.sheetUrl}${sep}date=${encodeURIComponent(todayISO())}`+(unitTitle?`&unit=${encodeURIComponent(unitTitle)}`:'');
-    const res=await fetch(url);
+    const res=await fetch(url, {method:'GET', redirect:'follow'});
     const data=await res.json();
     if(data && data.ok){
       S.boardList=data.list||[];
+      S.connState='ok';
+      S.connMsg='연결 성공! 구글 시트와 정상적으로 통신하고 있어요.';
     }else{
       S.boardErr='현황을 불러오지 못했어요. Apps Script 배포 설정(모든 사용자 액세스)을 확인해 주세요.';
     }
@@ -544,7 +580,14 @@ function viewSelect(){
 
         <div class="t-sec">
           <label class="t-label" for="sheetUrlIn">2. 구글 시트(Apps Script) 웹 앱 주소 <span style="font-weight:400;color:var(--sub)">(한 번 넣으면 자동 저장)</span></label>
-          <input type="url" id="sheetUrlIn" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(S.sheetUrl)}">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="url" id="sheetUrlIn" style="flex:1;min-width:220px" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(S.sheetUrl)}">
+            <button class="btn" id="testConnBtn" style="flex:none;white-space:nowrap">🔌 연결 확인</button>
+          </div>
+          ${S.connState?`<div class="fb ${S.connState==='ok'?'ok':S.connState==='err'?'no':''}" style="margin-top:8px;padding:9px 12px;font-size:14px;${S.connState==='wait'?'background:var(--warnbg);color:var(--warn);border:1.5px solid var(--warn)':''}">
+            <b>${S.connState==='ok'?'✅ ':S.connState==='err'?'❌ ':'⏳ '}</b>${esc(S.connMsg)}
+            ${S.connState==='err'&&S.sheetUrl?`<div style="margin-top:6px"><a href="${esc(S.sheetUrl)}" target="_blank" rel="noopener" style="color:inherit;font-weight:700;text-decoration:underline">👉 새 탭에서 주소 직접 열어 원인 확인하기</a></div>`:''}
+          </div>`:''}
           <details class="script-help">
             <summary>구글 시트 연동용 Apps Script 코드 보기 / 복사</summary>
             <p style="margin:6px 0 4px">구글 시트 상단 메뉴 <b>[확장 프로그램 → Apps Script]</b>에 아래 코드를 붙여 넣고, <b>[배포 → 새 배포 → 웹 앱(액세스 권한: 모든 사용자)]</b> 후 나온 주소를 위에 붙여 넣으세요.</p>
@@ -635,9 +678,11 @@ function viewSelect(){
     $('#cTitle').oninput=()=>{S.unitName=$('#cTitle').value;makeUrl()};
     $('#sheetUrlIn').oninput=()=>{
       S.sheetUrl=$('#sheetUrlIn').value.trim();
+      S.connState=''; S.connMsg='';
       try{localStorage.setItem('sciSafetySheetUrl',S.sheetUrl)}catch(e){}
       makeUrl();
     };
+    $('#testConnBtn').onclick=testSheetConnection;
     makeUrl();
 
     $('#copyScript').onclick=async()=>{
